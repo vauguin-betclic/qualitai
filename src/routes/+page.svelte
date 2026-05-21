@@ -1,11 +1,30 @@
 <script lang="ts">
   import {
+    NO_DECORATION,
     PERIODS,
     PERIOD_LABELS,
     type AuthResponse,
+    type DecorationStats,
     type Period,
     type ScanResponse
   } from '$lib/types';
+
+  function sortedDecorations(
+    stats: Record<string, DecorationStats>
+  ): Array<[string, DecorationStats]> {
+    return Object.entries(stats).sort(([a, sa], [b, sb]) => {
+      const aNo = a === NO_DECORATION;
+      const bNo = b === NO_DECORATION;
+      if (aNo !== bNo) return aNo ? 1 : -1;
+      if (sb.total !== sa.total) return sb.total - sa.total;
+      return a.localeCompare(b);
+    });
+  }
+
+  function ratioPct(num: number, denom: number): string {
+    if (denom === 0) return '—';
+    return `${((num / denom) * 100).toFixed(1)}%`;
+  }
 
   type AuthState =
     | { kind: 'idle' }
@@ -141,6 +160,31 @@
             {ratio === null ? '—' : `${ratio.toFixed(1)}%`}
           </span>
         </p>
+
+        {#if Object.keys(r.decorationStats).length > 0}
+          <div class="breakdown">
+            <h3>Decoration breakdown</h3>
+            <p class="result-line breakdown-header">
+              <span class="result-label">decoration</span>
+              <span class="breakdown-cells">
+                <span>total</span>
+                <span>👎</span>
+                <span>ratio</span>
+              </span>
+            </p>
+            {#each sortedDecorations(r.decorationStats) as [name, stats] (name)}
+              <p class="result-line" class:no-deco={name === NO_DECORATION}>
+                <span class="result-label">{name}</span>
+                <span class="breakdown-cells">
+                  <span class="cell-total">{stats.total}</span>
+                  <span class="cell-bad">{stats.withThumbdown}</span>
+                  <span class="cell-ratio">{ratioPct(stats.withThumbdown, stats.total)}</span>
+                </span>
+              </p>
+            {/each}
+          </div>
+        {/if}
+
         <p class="muted small">
           Repo: <code>{r.owner}/{r.repo}</code> · since <code>{r.sinceIso}</code> · review comments (inline) only
         </p>
@@ -314,5 +358,60 @@
   .result-line.ratio .result-value {
     font-size: 26px;
     color: #f0b86e;
+  }
+  .breakdown {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid #232831;
+  }
+  .breakdown h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #c8cdd3;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .breakdown .result-line {
+    margin: 4px 0;
+  }
+  .breakdown-cells {
+    display: grid;
+    grid-template-columns: 48px 48px 64px;
+    gap: 4px;
+    text-align: right;
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .breakdown-header {
+    color: #6a7079;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #232831;
+    padding-bottom: 4px;
+  }
+  .breakdown-header .breakdown-cells {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6a7079;
+  }
+  .breakdown .cell-bad {
+    color: #f08a8a;
+  }
+  .breakdown .cell-ratio {
+    color: #f0b86e;
+  }
+  .breakdown .no-deco .result-label {
+    font-style: italic;
+    color: #6a7079;
+  }
+  .breakdown .no-deco .breakdown-cells {
+    color: #8b9098;
+  }
+  .breakdown .no-deco .cell-bad,
+  .breakdown .no-deco .cell-ratio {
+    color: #8b9098;
   }
 </style>

@@ -15,6 +15,10 @@ export const PERIOD_LABELS: Record<Period, string> = {
   '7d': 'last 7 days'
 };
 
+export const NO_DECORATION = '(no decoration)';
+
+export type DecorationStats = { total: number; withThumbdown: number };
+
 export type ScanResponse = {
   owner: string;
   repo: string;
@@ -23,6 +27,7 @@ export type ScanResponse = {
   prScanned: number;
   totalCopilot: number;
   withThumbdown: number;
+  decorationStats: Record<string, DecorationStats>;
 };
 
 export type ApiError = { error: string };
