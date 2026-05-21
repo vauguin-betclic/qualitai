@@ -1,4 +1,4 @@
-import { ghJson } from './gh';
+import type { Octokit } from '@octokit/rest';
 import { NO_DECORATION, PERIOD_HOURS, type Period, type ScanResponse } from '$lib/types';
 
 export type RepoRef = { owner: string; repo: string };
@@ -30,14 +30,19 @@ function isValidSegment(s: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(s) && s.length <= 100;
 }
 
-type PrListItem = { number: number };
-
 type ReviewComment = {
   id: number;
   user: { login: string; type: string } | null;
   body?: string | null;
   reactions?: Record<string, number> | null;
 };
+
+function isCopilotComment(c: ReviewComment): boolean {
+  const u = c.user;
+  if (!u) return false;
+  if (u.type !== 'Bot') return false;
+  return /copilot/i.test(u.login);
+}
 
 const CONVENTIONAL_RE = /^\s*\**\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*(?:\(([^)]*)\))?\s*\**\s*:/;
 
@@ -53,48 +58,50 @@ export function extractDecorations(body: string): string[] {
     .filter((d) => d.length > 0);
 }
 
-function isCopilotComment(c: ReviewComment): boolean {
-  const u = c.user;
-  if (!u) return false;
-  if (u.type !== 'Bot') return false;
-  return /copilot/i.test(u.login);
-}
-
 function isoSeconds(d: Date): string {
   return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 export async function runScan(
   { owner, repo }: RepoRef,
-  period: Period
+  period: Period,
+  octokit: Octokit
 ): Promise<ScanResponse> {
   const since = new Date(Date.now() - PERIOD_HOURS[period] * 3600 * 1000);
   const sinceIso = isoSeconds(since);
 
-  const repoArg = `${owner}/${repo}`;
-  const prs = await ghJson<PrListItem[]>([
-    'pr',
-    'list',
-    '--repo',
-    repoArg,
-    '--state',
-    'merged',
-    '--search',
-    `merged:>=${sinceIso}`,
-    '--limit',
-    '100',
-    '--json',
-    'number'
-  ]);
+  const search = await octokit.rest.search.issuesAndPullRequests({
+    q: `repo:${owner}/${repo} is:pr is:merged merged:>=${sinceIso}`,
+    per_page: 100,
+    advanced_search: 'true'
+  });
+  const prs = search.data.items.map((i) => ({ number: i.number }));
 
-  const commentsPerPr = await Promise.all(
-    prs.map((pr) =>
-      ghJson<ReviewComment[]>([
-        'api',
-        '--paginate',
-        `repos/${owner}/${repo}/pulls/${pr.number}/comments`
-      ])
-    )
+  const commentsPerPr = await mapWithConcurrency(prs, 10, (pr) =>
+    octokit.paginate(octokit.rest.pulls.listReviewComments, {
+      owner,
+      repo,
+      pull_number: pr.number,
+      per_page: 100
+    }) as Promise<ReviewComment[]>
   );
 
   const all = commentsPerPr.flat();

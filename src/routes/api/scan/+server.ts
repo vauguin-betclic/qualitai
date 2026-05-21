@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { parseRepoUrl, runScan } from '$lib/server/scan';
-import { GhError } from '$lib/server/gh';
+import { octokitFor } from '$lib/server/github';
 import { PERIODS, type Period } from '$lib/types';
 import type { RequestHandler } from './$types';
 
@@ -8,7 +8,11 @@ function isPeriod(value: unknown): value is Period {
   return typeof value === 'string' && (PERIODS as readonly string[]).includes(value);
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+  if (!locals.session) {
+    throw error(401, 'Not signed in');
+  }
+
   let body: { repoUrl?: unknown; period?: unknown };
   try {
     body = await request.json();
@@ -30,11 +34,12 @@ export const POST: RequestHandler = async ({ request }) => {
     throw error(400, e instanceof Error ? e.message : 'Invalid repository URL');
   }
 
+  const octokit = octokitFor(locals.session.accessToken);
   try {
-    const result = await runScan(ref, period);
+    const result = await runScan(ref, period, octokit);
     return json(result);
   } catch (e) {
-    const msg = e instanceof GhError ? e.message : e instanceof Error ? e.message : String(e);
+    const msg = e instanceof Error ? e.message : String(e);
     throw error(500, `Scan failed: ${msg}`);
   }
 };

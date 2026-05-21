@@ -3,11 +3,13 @@
     NO_DECORATION,
     PERIODS,
     PERIOD_LABELS,
-    type AuthResponse,
     type DecorationStats,
     type Period,
     type ScanResponse
   } from '$lib/types';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
 
   function sortedDecorations(
     stats: Record<string, DecorationStats>
@@ -26,38 +28,15 @@
     return `${((num / denom) * 100).toFixed(1)}%`;
   }
 
-  type AuthState =
-    | { kind: 'idle' }
-    | { kind: 'loading' }
-    | { kind: 'connected'; login: string }
-    | { kind: 'error'; message: string };
-
   type ScanState =
     | { kind: 'idle' }
     | { kind: 'loading' }
     | { kind: 'success'; result: ScanResponse }
     | { kind: 'error'; message: string };
 
-  let auth = $state<AuthState>({ kind: 'idle' });
   let scan = $state<ScanState>({ kind: 'idle' });
   let repoUrl = $state('');
   let period = $state<Period>('7d');
-
-  async function connect() {
-    auth = { kind: 'loading' };
-    try {
-      const res = await fetch('/api/auth');
-      if (!res.ok) {
-        const text = await res.text();
-        auth = { kind: 'error', message: text || `HTTP ${res.status}` };
-        return;
-      }
-      const data: AuthResponse = await res.json();
-      auth = { kind: 'connected', login: data.login };
-    } catch (e) {
-      auth = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
-    }
-  }
 
   async function runScan() {
     if (!repoUrl.trim()) return;
@@ -73,8 +52,8 @@
         scan = { kind: 'error', message: text || `HTTP ${res.status}` };
         return;
       }
-      const data: ScanResponse = await res.json();
-      scan = { kind: 'success', result: data };
+      const result: ScanResponse = await res.json();
+      scan = { kind: 'success', result };
     } catch (e) {
       scan = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
     }
@@ -86,27 +65,25 @@
   <p class="subtitle">Monitor GitHub Copilot review comments</p>
 </header>
 
-<section class="card">
-  <h2>1. Authentication</h2>
-  {#if auth.kind === 'idle'}
-    <p class="muted">Use your local <code>gh</code> CLI session.</p>
-    <button onclick={connect}>Connect with gh</button>
-  {:else if auth.kind === 'loading'}
-    <p class="muted">Reading gh session…</p>
-  {:else if auth.kind === 'connected'}
-    <p>
-      Connected as <strong>{auth.login}</strong>
-      <button class="link" onclick={connect}>refresh</button>
-    </p>
-  {:else}
-    <p class="error">{auth.message}</p>
-    <button onclick={connect}>Retry</button>
-  {/if}
-</section>
-
-{#if auth.kind === 'connected'}
+{#if data.user === null}
+  <section class="card signin">
+    <p>Sign in with your GitHub account to scan repositories.</p>
+    <a class="primary-link" href="/login">Sign in with GitHub</a>
+  </section>
+{:else}
   <section class="card">
-    <h2>2. Scan a repository</h2>
+    <div class="auth-row">
+      <span>
+        Signed in as <strong>{data.user}</strong>
+      </span>
+      <form method="POST" action="/logout">
+        <button class="link" type="submit">Log out</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Scan a repository</h2>
     <p class="muted">
       Scans merged PRs and counts Copilot review comments over the chosen period.
     </p>
@@ -215,6 +192,20 @@
     padding: 20px 24px;
     margin-bottom: 16px;
   }
+  .signin {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .auth-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .auth-row form {
+    margin: 0;
+  }
   h2 {
     margin: 0 0 12px;
     font-size: 16px;
@@ -313,6 +304,18 @@
     background: #2a3038;
     color: #6a7079;
     cursor: not-allowed;
+  }
+  .primary-link {
+    display: inline-block;
+    background: #2c6fdb;
+    color: white;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+  .primary-link:hover {
+    background: #3a7fe5;
   }
   button.link {
     background: transparent;

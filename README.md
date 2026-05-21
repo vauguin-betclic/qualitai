@@ -12,19 +12,43 @@ For each scan, QualitAI tells you:
 - A breakdown by [Conventional Comments](https://conventionalcomments.org/) **decoration**
   (`non-blocking`, `blocking`, `if-minor`, …) with the same `total / 👎 / ratio` per bucket
 
-No token is stored, no database, no telemetry — the app shells out to your local
-`gh` CLI and renders the result in your browser.
+Users sign in with their own GitHub account via OAuth. The access token is stored
+encrypted in an HttpOnly cookie — never exposed to the browser JavaScript.
 
 ## Prerequisites
 
 - Node.js 20+ and npm
-- [GitHub CLI](https://cli.github.com/) `gh` installed and authenticated locally:
-  ```sh
-  gh auth login
-  ```
+- A **GitHub OAuth App** (one for dev, one for prod recommended)
 
-The token from `gh auth` stays on your machine. The browser only ever sees the
-aggregated counts.
+### Register the OAuth App
+
+1. Go to <https://github.com/settings/developers> → **OAuth Apps** → **New OAuth App**.
+2. Fill the form:
+   - **Application name**: QualitAI (or anything you like)
+   - **Homepage URL**: `http://localhost:5173` (dev) or your prod URL
+   - **Authorization callback URL**: `${BASE_URL}/login/callback`
+3. Generate a client secret and keep both `Client ID` and `Client Secret` at hand.
+
+### Environment variables
+
+Copy `.env.example` to `.env` and fill in:
+
+```sh
+cp .env.example .env
+```
+
+| Variable                     | What                                                     |
+| ---------------------------- | -------------------------------------------------------- |
+| `GITHUB_OAUTH_CLIENT_ID`     | Client ID of your OAuth App                              |
+| `GITHUB_OAUTH_CLIENT_SECRET` | Client secret of your OAuth App                          |
+| `SESSION_SECRET`             | 32-byte random key, base64-encoded                       |
+| `BASE_URL`            | Public origin of the app (used to build the callback URL)|
+
+Generate a session secret with:
+
+```sh
+openssl rand -base64 32
+```
 
 ## Quick start
 
@@ -35,7 +59,8 @@ npm run dev
 
 Then open <http://localhost:5173>.
 
-1. Click **Connect** — the app reads your `gh` session and displays your GitHub login.
+1. Click **Sign in with GitHub** — you'll be redirected to GitHub, asked to authorize
+   the app (scopes: `repo`, `read:user`), and bounced back.
 2. Pick a period: **24 hours**, **48 hours**, or **7 days**.
 3. Paste a repository (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`,
    or simply `owner/repo`) and click **Scan**.
@@ -44,37 +69,52 @@ Then open <http://localhost:5173>.
 ## How it works
 
 ```
-Browser  ──fetch──▶  SvelteKit server route  ──execFile──▶  gh CLI  ──HTTPS──▶  GitHub API
+Browser ──fetch──▶ SvelteKit server route ──@octokit/rest──▶ GitHub REST API
+   ▲                       │
+   └── encrypted session ──┘
+       cookie (JWE)
 ```
 
-1. `GET /api/auth` runs `gh auth status` then `gh api user`, returning your login.
-2. `POST /api/scan { repoUrl, period }`:
-   1. Lists merged PRs in the period with
-      `gh pr list --state merged --search "merged:>={ISO}"`.
-   2. For each PR, fetches inline review comments via
-      `gh api --paginate repos/{o}/{r}/pulls/{n}/comments`.
+1. `GET /login` → generates a CSRF state, redirects to `github.com/login/oauth/authorize`.
+2. `GET /login/callback` → verifies state, exchanges `code` for an access token,
+   stores `{ accessToken, login }` in a JWE-encrypted cookie (AES-256-GCM via `jose`).
+3. `src/hooks.server.ts` reads the cookie on every request and attaches the session
+   to `event.locals`.
+4. `POST /api/scan { repoUrl, period }`:
+   1. Resolves the merged PRs over the period via
+      `octokit.rest.search.issuesAndPullRequests({ q: "is:pr is:merged merged:>=…" })`.
+   2. For each PR, paginates `octokit.rest.pulls.listReviewComments` (10 PRs in parallel).
    3. Filters comments where `user.type === "Bot"` and the login matches `/copilot/i`.
-   4. Counts thumbdowns from the `reactions["-1"]` field returned inline by the API.
-   5. Parses the first line of each body against the Conventional Comments format
-      to extract decorations.
-   6. Returns aggregate counts — never the raw comment text.
+   4. Parses the first line of each body against the Conventional Comments format to
+      extract decorations.
+   5. Aggregates totals, thumbdowns, ratios, and decoration buckets.
+5. `POST /logout` → clears the session cookie.
 
 ## Project layout
 
 ```
 src/
 ├── app.html
+├── app.d.ts
+├── hooks.server.ts            # reads session cookie, populates event.locals.session
 ├── lib/
-│   ├── types.ts             # shared types (ScanResponse, Period, …)
+│   ├── types.ts               # shared types (ScanResponse, Period, decorations…)
 │   └── server/
-│       ├── gh.ts            # execFile wrapper around the gh CLI
-│       └── scan.ts          # URL parsing, PR listing, decoration parsing, aggregation
+│       ├── github.ts          # Octokit factory + getAuthenticatedLogin
+│       ├── oauth.ts           # authorize URL + code-for-token exchange
+│       ├── session.ts         # JWE seal/unseal (jose)
+│       └── scan.ts            # URL parsing, scan logic, decoration parsing
 └── routes/
     ├── +layout.svelte
-    ├── +page.svelte         # UI
-    └── api/
-        ├── auth/+server.ts  # GET → { login }
-        └── scan/+server.ts  # POST → ScanResponse
+    ├── +page.svelte           # UI (signed-in or signed-out)
+    ├── +page.server.ts        # load → { user: locals.session?.login ?? null }
+    ├── api/
+    │   ├── auth/+server.ts    # GET → { login } | 401
+    │   └── scan/+server.ts    # POST → ScanResponse | 401/400/500
+    ├── login/
+    │   ├── +server.ts         # GET → redirect to GitHub authorize
+    │   └── callback/+server.ts# GET → exchange code, set session, redirect /
+    └── logout/+server.ts      # POST → clear session, redirect /
 ```
 
 ## Scope and limitations

@@ -18,5 +18,9 @@
     "svelte-check": "^4.1.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "jose": "^6.2.3"
   }
 }
