@@ -12,10 +12,13 @@
   function sortedDecorations(
     stats: Record<string, DecorationStats>
   ): Array<[string, DecorationStats]> {
+    const ratio = (s: DecorationStats) => (s.total > 0 ? s.withThumbdown / s.total : 0);
     return Object.entries(stats).sort(([a, sa], [b, sb]) => {
       const aNo = a === NO_DECORATION;
       const bNo = b === NO_DECORATION;
       if (aNo !== bNo) return aNo ? 1 : -1;
+      const rDiff = ratio(sb) - ratio(sa);
+      if (rDiff !== 0) return rDiff;
       if (sb.total !== sa.total) return sb.total - sa.total;
       return a.localeCompare(b);
     });
