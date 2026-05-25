@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import {
     NO_DECORATION,
     PERIODS,
@@ -8,6 +9,7 @@
     type Period,
     type ScanResponse
   } from '$lib/types';
+  import { clearHistory, loadHistory, pushHistory } from '$lib/repoHistory';
 
   function sortedDecorations(
     stats: Record<string, DecorationStats>
@@ -45,6 +47,11 @@
   let scan = $state<ScanState>({ kind: 'idle' });
   let repoUrl = $state('');
   let period = $state<Period>('7d');
+  let history = $state<string[]>([]);
+
+  onMount(() => {
+    history = loadHistory();
+  });
 
   async function connect() {
     auth = { kind: 'loading' };
@@ -78,6 +85,7 @@
       }
       const data: ScanResponse = await res.json();
       scan = { kind: 'success', result: data };
+      history = pushHistory(`${data.owner}/${data.repo}`);
     } catch (e) {
       scan = { kind: 'error', message: e instanceof Error ? e.message : String(e) };
     }
@@ -130,6 +138,25 @@
           {scan.kind === 'loading' ? 'Scanning…' : 'Scan'}
         </button>
       </div>
+      {#if history.length > 0}
+        <div class="history">
+          <span class="history-label">Recent:</span>
+          <div class="chips">
+            {#each history as repo (repo)}
+              <button
+                type="button"
+                class="chip"
+                onclick={() => (repoUrl = repo)}
+                disabled={scan.kind === 'loading'}>{repo}</button>
+            {/each}
+          </div>
+          <button
+            type="button"
+            class="link history-clear"
+            onclick={() => (history = clearHistory())}
+            disabled={scan.kind === 'loading'}>clear</button>
+        </div>
+      {/if}
       <fieldset class="periods" disabled={scan.kind === 'loading'}>
         <legend>Period</legend>
         {#each PERIODS as p (p)}
@@ -285,6 +312,45 @@
   .periods:disabled .period-option {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+  .history {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .history-label {
+    color: #8b9098;
+    font-size: 12px;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+  .chip {
+    background: #0f1115;
+    border: 1px solid #2c333d;
+    color: #c8cdd3;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    cursor: pointer;
+  }
+  .chip:hover:not(:disabled) {
+    background: #161a21;
+    border-color: #3a4250;
+    color: #e6e8eb;
+  }
+  .chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .history-clear {
+    font-size: 11px;
   }
   input[type='text'] {
     flex: 1;
