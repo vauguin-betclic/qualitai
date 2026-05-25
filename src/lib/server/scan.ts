@@ -82,7 +82,7 @@ export async function runScan(
     '--search',
     `merged:>=${sinceIso}`,
     '--limit',
-    '100',
+    '1000',
     '--json',
     'number'
   ]);
