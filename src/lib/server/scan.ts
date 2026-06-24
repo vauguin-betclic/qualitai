@@ -66,10 +66,22 @@ function isoSeconds(d: Date): string {
 
 export async function runScan(
   { owner, repo }: RepoRef,
-  period: Period
+  period: Period,
+  custom?: { startIso: string; endIso: string }
 ): Promise<ScanResponse> {
-  const since = new Date(Date.now() - PERIOD_HOURS[period] * 3600 * 1000);
-  const sinceIso = isoSeconds(since);
+  let sinceIso: string;
+  let untilIso: string | undefined;
+  let mergedFilter: string;
+  if (period === 'custom') {
+    if (!custom) throw new Error('Custom range required for period=custom');
+    sinceIso = custom.startIso;
+    untilIso = custom.endIso;
+    mergedFilter = `merged:${custom.startIso}..${custom.endIso}`;
+  } else {
+    const since = new Date(Date.now() - PERIOD_HOURS[period] * 3600 * 1000);
+    sinceIso = isoSeconds(since);
+    mergedFilter = `merged:>=${sinceIso}`;
+  }
 
   const repoArg = `${owner}/${repo}`;
   const prs = await ghJson<PrListItem[]>([
@@ -80,7 +92,7 @@ export async function runScan(
     '--state',
     'merged',
     '--search',
-    `merged:>=${sinceIso}`,
+    mergedFilter,
     '--limit',
     '1000',
     '--json',
@@ -122,6 +134,7 @@ export async function runScan(
     repo,
     period,
     sinceIso,
+    untilIso,
     prScanned: prs.length,
     totalCopilot: copilot.length,
     withThumbdown: withThumbdown.length,

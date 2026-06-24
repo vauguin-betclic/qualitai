@@ -10,6 +10,7 @@
     type ScanResponse
   } from '$lib/types';
   import { clearHistory, loadHistory, pushHistory } from '$lib/repoHistory';
+  import { validateCustomRange } from '$lib/dateRange';
 
   function sortedDecorations(
     stats: Record<string, DecorationStats>
@@ -47,7 +48,16 @@
   let scan = $state<ScanState>({ kind: 'idle' });
   let repoUrl = $state('');
   let period = $state<Period>('7d');
+  let startDate = $state('');
+  let endDate = $state('');
   let history = $state<string[]>([]);
+
+  const customValidation = $derived(
+    period === 'custom' ? validateCustomRange({ startDate, endDate }) : null
+  );
+  const customError = $derived(
+    customValidation && !customValidation.ok ? customValidation.error : null
+  );
 
   onMount(() => {
     history = loadHistory();
@@ -73,10 +83,20 @@
     if (!repoUrl.trim()) return;
     scan = { kind: 'loading' };
     try {
+      const payload: {
+        repoUrl: string;
+        period: Period;
+        startDate?: string;
+        endDate?: string;
+      } = { repoUrl, period };
+      if (period === 'custom') {
+        payload.startDate = startDate;
+        payload.endDate = endDate;
+      }
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ repoUrl, period })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         const text = await res.text();
@@ -134,7 +154,11 @@
           bind:value={repoUrl}
           disabled={scan.kind === 'loading'}
         />
-        <button type="submit" disabled={!repoUrl.trim() || scan.kind === 'loading'}>
+        <button
+          type="submit"
+          disabled={!repoUrl.trim() ||
+            scan.kind === 'loading' ||
+            (period === 'custom' && customError !== null)}>
           {scan.kind === 'loading' ? 'Scanning…' : 'Scan'}
         </button>
       </div>
@@ -166,6 +190,21 @@
           </label>
         {/each}
       </fieldset>
+      {#if period === 'custom'}
+        <div class="custom-range">
+          <label>
+            <span>From</span>
+            <input type="date" bind:value={startDate} disabled={scan.kind === 'loading'} />
+          </label>
+          <label>
+            <span>To</span>
+            <input type="date" bind:value={endDate} disabled={scan.kind === 'loading'} />
+          </label>
+        </div>
+        {#if customError && (startDate || endDate)}
+          <p class="error small">{customError}</p>
+        {/if}
+      {/if}
     </form>
 
     {#if scan.kind === 'success'}
@@ -173,7 +212,13 @@
       {@const ratio = r.totalCopilot > 0 ? (r.withThumbdown / r.totalCopilot) * 100 : null}
       <div class="result">
         <p class="result-line">
-          <span class="result-label">PRs merged in the {PERIOD_LABELS[r.period]}</span>
+          <span class="result-label">
+            {#if r.period === 'custom' && r.untilIso}
+              PRs merged between {r.sinceIso} and {r.untilIso}
+            {:else}
+              PRs merged in the {PERIOD_LABELS[r.period]}
+            {/if}
+          </span>
           <span class="result-value">{r.prScanned}</span>
         </p>
         <p class="result-line">
@@ -310,6 +355,37 @@
     color: white;
   }
   .periods:disabled .period-option {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .custom-range {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .custom-range label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #8b9098;
+  }
+  .custom-range input[type='date'] {
+    background: #0f1115;
+    border: 1px solid #2c333d;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #e6e8eb;
+    font: inherit;
+    font-size: 13px;
+    color-scheme: dark;
+  }
+  .custom-range input[type='date']:focus {
+    outline: none;
+    border-color: #4a90e2;
+  }
+  .custom-range input[type='date']:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }

@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { parseRepoUrl, runScan } from '$lib/server/scan';
 import { GhError } from '$lib/server/gh';
 import { PERIODS, type Period } from '$lib/types';
+import { validateCustomRange } from '$lib/dateRange';
 import type { RequestHandler } from './$types';
 
 function isPeriod(value: unknown): value is Period {
@@ -9,7 +10,7 @@ function isPeriod(value: unknown): value is Period {
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-  let body: { repoUrl?: unknown; period?: unknown };
+  let body: { repoUrl?: unknown; period?: unknown; startDate?: unknown; endDate?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -23,6 +24,13 @@ export const POST: RequestHandler = async ({ request }) => {
 
   const period: Period = isPeriod(body.period) ? body.period : '7d';
 
+  let custom: { startIso: string; endIso: string } | undefined;
+  if (period === 'custom') {
+    const result = validateCustomRange({ startDate: body.startDate, endDate: body.endDate });
+    if (!result.ok) throw error(400, result.error);
+    custom = { startIso: result.startIso, endIso: result.endIso };
+  }
+
   let ref;
   try {
     ref = parseRepoUrl(repoUrl);
@@ -31,7 +39,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   try {
-    const result = await runScan(ref, period);
+    const result = await runScan(ref, period, custom);
     return json(result);
   } catch (e) {
     const msg = e instanceof GhError ? e.message : e instanceof Error ? e.message : String(e);
